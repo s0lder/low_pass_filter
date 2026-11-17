@@ -1,17 +1,18 @@
+#include <linux/limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #include <sndfile.h>
 
 #define CHUNK_SIZE 4096
-#define MAX_FILENAME_LEN 256
-#define SUFFIX "out-"
+#define SUFFIX "-out"
 
 int main(int argc, char **argv) {
 	// ---------- processing cmdline args ---------
 	if (argc < 3) {
-		fprintf(stderr, "usage: %s INPUT_FILE LPF_BETA_VALUE\n", argv[0]);
+		fprintf(stderr, "usage: %s INPUT_FILE_PATH LPF_BETA_VALUE\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
@@ -25,33 +26,35 @@ int main(int argc, char **argv) {
 		return EXIT_FAILURE;
 	}
 
-	char infile_name[MAX_FILENAME_LEN], outfile_name[MAX_FILENAME_LEN];
-	
-	if (strlen(argv[1]) >= MAX_FILENAME_LEN) {
-		fprintf(stderr, "input filename too long");
+	char infile_path[PATH_MAX], outfile_name[FILENAME_MAX];
+
+	char *last_slash = strrchr(argv[1], '/');
+	if (strlen(argv[1]) >= PATH_MAX) {
+		fprintf(stderr, "input path too long\n");
 		return EXIT_FAILURE;
 	}
+	sprintf(infile_path, "%s", argv[1]);
 
-	sprintf(infile_name, "%s", argv[1]);
-
-	size_t dot_index = strlen(infile_name) - 1;
-	while (infile_name[dot_index] != '.' && dot_index > 0)
-		dot_index--;
-
-	if (dot_index > 0) {
-		snprintf(outfile_name, dot_index + 1, "%s", infile_name);
-		if (strlen(outfile_name) + strlen(infile_name + dot_index) + sizeof SUFFIX - 1 >= MAX_FILENAME_LEN) {
-			fprintf(stderr, "input filename too long");
+	char *infile_basename = last_slash ? last_slash + 1 : infile_path;
+	char *last_dot = strrchr(infile_basename, '.');
+	if (last_dot != NULL && last_dot > infile_basename) {
+		int dot_index = last_dot - infile_basename;
+		if (dot_index + strlen(last_dot) + sizeof SUFFIX - 1 >= FILENAME_MAX) {
+			fprintf(stderr, "input filename too long\n");
 			return EXIT_FAILURE;
 		}
-		strcat(strcat(outfile_name, "-out"), infile_name + dot_index);
+
+		snprintf(outfile_name, dot_index + 1, "%s", infile_basename);
+		snprintf(outfile_name + dot_index, sizeof SUFFIX + strlen(last_dot), "%s%s", SUFFIX, last_dot);
 	} else {
-		if (strlen(infile_name) + sizeof SUFFIX >= MAX_FILENAME_LEN) {
-			fprintf(stderr, "input filename too long");
+		if (strlen(infile_basename) + sizeof SUFFIX - 1 >= FILENAME_MAX) {
+			fprintf(stderr, "input filename too long\n");
 			return EXIT_FAILURE;
 		}
-		sprintf(outfile_name, "%s", infile_name);
-		strcat(outfile_name, "-out");
+		if (snprintf(outfile_name, FILENAME_MAX, "%s%s", infile_basename, SUFFIX) < 0) {
+			fprintf(stderr, "overflow!\n");
+			return EXIT_FAILURE;
+		}
 	}
 
 	// ---------- creating and opening input and output files ----------
@@ -59,8 +62,8 @@ int main(int argc, char **argv) {
 
 	struct SF_INFO sfinfo = { .format = 0 };
 
-	if (!(infile = sf_open(infile_name, SFM_READ, &sfinfo))) {
-		fprintf(stderr, "error opening file %s: %s\n", infile_name, sf_strerror(infile));
+	if (!(infile = sf_open(infile_path, SFM_READ, &sfinfo))) {
+		fprintf(stderr, "error opening file %s: %s\n", infile_path, sf_strerror(infile));
 		return EXIT_FAILURE;
 	}
 
@@ -72,7 +75,7 @@ int main(int argc, char **argv) {
 
 	// ---------- reading and writing ----------
 	double input_buffer[CHUNK_SIZE];
-	double output_buffer[CHUNK_SIZE];
+	double output_buffer[CHUNK_SIZE] = {0};
 	
 	// size is the max channel count
 	double prev_last_output[1024] = {0};
@@ -88,8 +91,6 @@ int main(int argc, char **argv) {
 		}
 		sf_write_double(outfile, output_buffer, readcount);
 	}
-
-	printf("done\n");
 
 	sf_close(infile);
 	sf_close(outfile);
